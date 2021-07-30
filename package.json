@@ -1,6 +1,6 @@
 {
 	"name": "@teamelysium/kinect-azure",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Nodejs library to access the azure kinect data from the official SDK, modified by TeamElysium",
 	"repository": "https://github.com/TeamElysium/kinect-azure",
 	"author": "Min <challenger71498@gmail.com>",
