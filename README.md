@@ -1,8 +1,10 @@
 # Azure Kinect Library for Node / Electron
 
+[![npm](https://img.shields.io/node/v/kinect-azure.svg)](https://nodejs.org/en/)
+[![npm](https://img.shields.io/npm/v/kinect-azure.svg)](https://npmjs.org/package/kinect-azure)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=NUZP3U3QZEQV2&currency_code=EUR&source=url)
 
-This library enables you to use the Azure Kinect in your nodejs or electron apps.
+This library enables you to use the Azure Kinect in your nodejs or electron apps on Windows and Linux.
 
 ![screenshot of skeleton 2d demo](examples/screenshots/screenshot-demos-body-tracking-2d.png)
 
@@ -23,7 +25,11 @@ Check out [my kinect2 library](https://github.com/wouterverweirder/kinect2) for 
 
 Make sure you have the Azure Kinect drivers and the [Azure Kinect Body SDK](https://docs.microsoft.com/en-us/azure/kinect-dk/body-sdk-download) installed.
 
-The Body Tracking SDK relies on quite a few dll & onnx files, which you can find in the `Azure Kinect Body SDK\tools` directory. Either add that folder (eg C:\Program Files\Azure Kinect Body Tracking SDK\tools) to your PATH or copy the dll and onnx files into the root of your project.
+The current version of this library links to:
+- Azure Kinect Sensor SDK v1.4.1
+- Azure Kinect Body Tracking SDK v1.1.0
+
+On Windows, The Body Tracking SDK relies on quite a few dll & onnx files, which you can find in the `Azure Kinect Body SDK\tools` directory. Either add that folder (eg C:\Program Files\Azure Kinect Body Tracking SDK\tools) to your PATH or copy the dll and onnx files into the root of your project.
 
 Just npm install like you would do with any regular module. 
 
@@ -60,6 +66,17 @@ $ npm start
 ```
 
 The electron examples have the javascript code inside the html files. You can find these html files in [examples/electron/renderer/demos](examples/electron/renderer/demos).
+
+## Contributors ✨
+
+Special thank you to the following people for improving this library:
+
+- [Min Oh (오민석)](https://github.com/challenger71498)
+- [Chris Bright](https://github.com/Chrisbright10)
+- [Pete Shand](https://github.com/peteshand)
+- [Sir Fancy Walrus](https://github.com/SirFancyWalrus)
+- [Itok](https://github.com/ikenichiro)
+- [Steven Rick](https://github.com/stevenrick)
 
 ## Donate
 
