@@ -1,14 +1,14 @@
 {
 	"name": "@teamelysium/kinect-azure",
-	"version": "0.1.3",
+	"version": "0.1.4-alpha.1",
 	"description": "Nodejs library to access the azure kinect data from the official SDK, modified by TeamElysium",
 	"repository": "https://github.com/TeamElysium/kinect-azure",
 	"author": "Min <challenger71498@gmail.com>",
 	"main": "lib/kinect-azure.js",
 	"dependencies": {
 		"node-addon-api": "^1.0.0",
-		"prebuild-install": "^6.1.3",
-		"prebuild": "^10.0.1"
+		"prebuild": "^10.0.1",
+		"prebuild-install": "^6.1.3"
 	},
 	"engines": {
 		"node": ">= 10.16.0"
