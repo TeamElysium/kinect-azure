@@ -1023,7 +1023,7 @@ Napi::Value MethodStartListening(const Napi::CallbackInfo &info)
                                    if (depth_image == NULL)
                                    {
                                      mtx.unlock();
-                                     break;
+                                     continue;
                                    }
 
                                    // printf("[kinect_azure.cc] k4abt_tracker_enqueue_capture\n");
