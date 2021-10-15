@@ -1022,6 +1022,7 @@ Napi::Value MethodStartListening(const Napi::CallbackInfo &info)
                                  {
                                    if (depth_image == NULL)
                                    {
+                                     k4a_capture_release(sensor_capture);
                                      mtx.unlock();
                                      continue;
                                    }
