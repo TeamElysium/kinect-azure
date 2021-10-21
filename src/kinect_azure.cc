@@ -774,6 +774,8 @@ Napi::Value MethodStartListening(const Napi::CallbackInfo &info)
                                    if (get_capture_result != K4A_WAIT_RESULT_SUCCEEDED)
                                    {
                                      // printf("[kinect_azure.cc] get_capture_result != K4A_WAIT_RESULT_SUCCEEDED\n");
+
+                                     k4a_capture_release(sensor_capture);
                                      continue;
                                    }
                                  }
