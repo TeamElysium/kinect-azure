@@ -1,5 +1,8 @@
 #define KINECT_AZURE_ENABLE_BODY_TRACKING = 1
 
+// TODO: Remove this on release
+#define NAPI_VERSION 4
+
 #include <thread>
 #include <mutex>
 #include <napi.h>
@@ -112,6 +115,19 @@ inline bool transform_joint_from_depth_3d_to_2d(
   return valid != 0;
 }
 
+// Gets calibration from device.
+bool getCalibration(k4a_device_t device_handle, const k4a_depth_mode_t depth_mode, const k4a_color_resolution_t color_resolution, k4a_calibration_t *calibration)
+{
+  k4a_result_t getCalibrationResult = k4a_device_get_calibration(device_handle, depth_mode, color_resolution, calibration);
+
+  if (getCalibrationResult == K4A_RESULT_FAILED)
+  {
+    return false;
+  }
+
+  return true;
+}
+
 Napi::Value MethodInit(const Napi::CallbackInfo &info)
 {
   Napi::Env env = info.Env();
@@ -157,7 +173,8 @@ Napi::Value MethodOpen(const Napi::CallbackInfo &info)
   int index = 0;
 
   // If index specified, look for specific Kinect.
-  if (info.Length() == 1 && info[0].IsNumber()) {
+  if (info.Length() == 1 && info[0].IsNumber())
+  {
     index = info[0].ToNumber().Int32Value();
   }
 
@@ -203,7 +220,8 @@ Napi::Value MethodSerialOpen(const Napi::CallbackInfo &info)
   }
   else
   {
-    if (K4A_SUCCEEDED(k4a_device_open(K4A_DEVICE_DEFAULT, &g_device))) {
+    if (K4A_SUCCEEDED(k4a_device_open(K4A_DEVICE_DEFAULT, &g_device)))
+    {
       returnValue = true;
     }
   }
@@ -425,14 +443,26 @@ Napi::Value MethodStartCameras(const Napi::CallbackInfo &info)
 
   g_deviceConfig = deviceConfig;
 
-  k4a_device_start_cameras(g_device, &g_deviceConfig);
+  k4a_result_t cameraStartResult = k4a_device_start_cameras(g_device, &g_deviceConfig);
+
+  if (cameraStartResult == K4A_RESULT_FAILED)
+  {
+    // TODO: Throws an exception when camera start failed.
+    return Napi::Boolean::New(env, false);
+  }
 
   if (g_customDeviceConfig.include_imu_sample)
   {
     k4a_device_start_imu(g_device);
   }
 
-  k4a_device_get_calibration(g_device, g_deviceConfig.depth_mode, g_deviceConfig.color_resolution, &g_calibration);
+  bool getCalibrationResult = getCalibration(g_device, g_deviceConfig.depth_mode, g_deviceConfig.color_resolution, &g_calibration);
+
+  if (!getCalibrationResult)
+  {
+    // TODO: Throws an exception when getting device calibration data failed.
+    return Napi::Boolean::New(env, false);
+  }
 
   return Napi::Boolean::New(env, true);
 }
@@ -453,34 +483,50 @@ Napi::Value MethodCreateTracker(const Napi::CallbackInfo &info)
 {
   Napi::Env env = info.Env();
   k4a_calibration_t sensor_calibration;
-  k4a_device_get_calibration(g_device, g_deviceConfig.depth_mode, g_deviceConfig.color_resolution, &sensor_calibration);
-  k4abt_tracker_configuration_t tracker_config = K4ABT_TRACKER_CONFIG_DEFAULT;
 
-  if (info.Length() > 0) {
-      Napi::Object js_config =  info[0].As<Napi::Object>();
-      Napi::Value js_sensor_orientation = js_config.Get("sensor_orientation");
-      if (js_sensor_orientation.IsNumber())
-      {
-        tracker_config.sensor_orientation = (k4abt_sensor_orientation_t) js_sensor_orientation.As<Napi::Number>().Int32Value();
-      }
-      Napi::Value js_processing_mode = js_config.Get("processing_mode");
-      if (js_processing_mode.IsNumber())
-      {
-        tracker_config.processing_mode = (k4abt_tracker_processing_mode_t) js_processing_mode.As<Napi::Number>().Int32Value();
-      }
-      Napi::Value js_gpu_device_id = js_config.Get("gpu_device_id");
-      if (js_gpu_device_id.IsNumber())
-      {
-        tracker_config.gpu_device_id = (int32_t) js_gpu_device_id.As<Napi::Number>().Int32Value();
-      }
-      Napi::Value js_model_path = js_config.Get("model_path");
-      if (js_model_path.IsString())
-      {
-        tracker_config.model_path = js_model_path.As<Napi::String>().Utf8Value().c_str();
-      }
+  bool getCalibrationResult = getCalibration(g_device, g_deviceConfig.depth_mode, g_deviceConfig.color_resolution, &sensor_calibration);
+
+  if (!getCalibrationResult)
+  {
+    // TODO: Throws an exception when getting device calibration failed.
+    return Napi::Boolean::New(env, false);
   }
 
-  k4abt_tracker_create(&sensor_calibration, tracker_config, &g_tracker);
+  k4abt_tracker_configuration_t tracker_config = K4ABT_TRACKER_CONFIG_DEFAULT;
+
+  if (info.Length() > 0)
+  {
+    Napi::Object js_config = info[0].As<Napi::Object>();
+    Napi::Value js_sensor_orientation = js_config.Get("sensor_orientation");
+    if (js_sensor_orientation.IsNumber())
+    {
+      tracker_config.sensor_orientation = (k4abt_sensor_orientation_t)js_sensor_orientation.As<Napi::Number>().Int32Value();
+    }
+    Napi::Value js_processing_mode = js_config.Get("processing_mode");
+    if (js_processing_mode.IsNumber())
+    {
+      tracker_config.processing_mode = (k4abt_tracker_processing_mode_t)js_processing_mode.As<Napi::Number>().Int32Value();
+    }
+    Napi::Value js_gpu_device_id = js_config.Get("gpu_device_id");
+    if (js_gpu_device_id.IsNumber())
+    {
+      tracker_config.gpu_device_id = (int32_t)js_gpu_device_id.As<Napi::Number>().Int32Value();
+    }
+    Napi::Value js_model_path = js_config.Get("model_path");
+    if (js_model_path.IsString())
+    {
+      tracker_config.model_path = js_model_path.As<Napi::String>().Utf8Value().c_str();
+    }
+  }
+
+  k4a_result_t createTrackerResult = k4abt_tracker_create(&sensor_calibration, tracker_config, &g_tracker);
+
+  if (createTrackerResult != K4A_RESULT_SUCCEEDED)
+  {
+    // TODO: Throws an exception when creating body tracker failed.
+    return Napi::Boolean::New(env, false);
+  }
+
   return Napi::Boolean::New(env, true);
 }
 
@@ -574,654 +620,657 @@ Napi::Value MethodStartListening(const Napi::CallbackInfo &info)
       });
 
   threadJoinedMutex.lock();
-  nativeThread = std::thread([] {
-    auto callback = [](Napi::Env env, Napi::Function jsCallback, JSFrame *jsFrameRef) {
-      if (!is_listening || (is_paused && !is_seeking))
+  nativeThread = std::thread(
+      []
       {
-        // printf("[kinect_azure.cc] callback not listening\n");
-        return;
-      }
-      // printf("[kinect_azure.cc] construct data\n");
-      // Transform native data into JS data, passing it to the provided
-      // `jsCallback` -- the TSFN's JavaScript function.
-      mtx.lock();
-      JSFrame jsFrame = *jsFrameRef;
+        auto callback = [](Napi::Env env, Napi::Function jsCallback, JSFrame *jsFrameRef)
+        {
+          if (!is_listening || (is_paused && !is_seeking))
+          {
+            // printf("[kinect_azure.cc] callback not listening\n");
+            return;
+          }
+          // printf("[kinect_azure.cc] construct data\n");
+          // Transform native data into JS data, passing it to the provided
+          // `jsCallback` -- the TSFN's JavaScript function.
+          mtx.lock();
+          JSFrame jsFrame = *jsFrameRef;
 
-      Napi::Object data = Napi::Object::New(env);
-      {
-        Napi::Object imu = Napi::Object::New(env);
-        imu.Set(Napi::String::New(env, "temperature"), Napi::Number::New(env, jsFrame.imuSample.temperature));
-        imu.Set(Napi::String::New(env, "accX"), Napi::Number::New(env, jsFrame.imuSample.accX));
-        imu.Set(Napi::String::New(env, "accY"), Napi::Number::New(env, jsFrame.imuSample.accY));
-        imu.Set(Napi::String::New(env, "accZ"), Napi::Number::New(env, jsFrame.imuSample.accZ));
-        imu.Set(Napi::String::New(env, "accTimestamp"), Napi::Number::New(env, jsFrame.imuSample.accTimestamp));
-        imu.Set(Napi::String::New(env, "gyroX"), Napi::Number::New(env, jsFrame.imuSample.gyroX));
-        imu.Set(Napi::String::New(env, "gyroY"), Napi::Number::New(env, jsFrame.imuSample.gyroY));
-        imu.Set(Napi::String::New(env, "gyroZ"), Napi::Number::New(env, jsFrame.imuSample.gyroZ));
-        imu.Set(Napi::String::New(env, "gyroTimestamp"), Napi::Number::New(env, jsFrame.imuSample.gyroTimestamp));
-        data.Set(Napi::String::New(env, "imu"), imu);
-      }
-      {
-        Napi::Object colorImageFrame = Napi::Object::New(env);
-        Napi::Buffer<uint8_t> imageData = Napi::Buffer<uint8_t>::New(env, jsFrame.colorImageFrame.image_data, jsFrame.colorImageFrame.image_length);
-        colorImageFrame.Set(Napi::String::New(env, "imageData"), imageData);
-        colorImageFrame.Set(Napi::String::New(env, "imageLength"), Napi::Number::New(env, jsFrame.colorImageFrame.image_length));
-        colorImageFrame.Set(Napi::String::New(env, "width"), Napi::Number::New(env, jsFrame.colorImageFrame.width));
-        colorImageFrame.Set(Napi::String::New(env, "height"), Napi::Number::New(env, jsFrame.colorImageFrame.height));
-        colorImageFrame.Set(Napi::String::New(env, "strideBytes"), Napi::Number::New(env, jsFrame.colorImageFrame.stride_bytes));
-        colorImageFrame.Set(Napi::String::New(env, "deviceTimestamp"), Napi::Number::New(env, jsFrame.colorImageFrame.device_timestamp));
-        colorImageFrame.Set(Napi::String::New(env, "systemTimestamp"), Napi::Number::New(env, jsFrame.colorImageFrame.system_timestamp));
-        data.Set(Napi::String::New(env, "colorImageFrame"), colorImageFrame);
-      }
-      {
-        Napi::Object depthImageFrame = Napi::Object::New(env);
-        Napi::Buffer<uint8_t> imageData = Napi::Buffer<uint8_t>::New(env, jsFrame.depthImageFrame.image_data, jsFrame.depthImageFrame.image_length);
-        depthImageFrame.Set(Napi::String::New(env, "imageData"), imageData);
-        depthImageFrame.Set(Napi::String::New(env, "imageLength"), Napi::Number::New(env, jsFrame.depthImageFrame.image_length));
-        depthImageFrame.Set(Napi::String::New(env, "width"), Napi::Number::New(env, jsFrame.depthImageFrame.width));
-        depthImageFrame.Set(Napi::String::New(env, "height"), Napi::Number::New(env, jsFrame.depthImageFrame.height));
-        depthImageFrame.Set(Napi::String::New(env, "strideBytes"), Napi::Number::New(env, jsFrame.depthImageFrame.stride_bytes));
-        depthImageFrame.Set(Napi::String::New(env, "deviceTimestamp"), Napi::Number::New(env, jsFrame.depthImageFrame.device_timestamp));
-        depthImageFrame.Set(Napi::String::New(env, "systemTimestamp"), Napi::Number::New(env, jsFrame.depthImageFrame.system_timestamp));
-        data.Set(Napi::String::New(env, "depthImageFrame"), depthImageFrame);
-      }
-      {
-        Napi::Object irImageFrame = Napi::Object::New(env);
-        Napi::Buffer<uint8_t> imageData = Napi::Buffer<uint8_t>::New(env, jsFrame.irImageFrame.image_data, jsFrame.irImageFrame.image_length);
-        irImageFrame.Set(Napi::String::New(env, "imageData"), imageData);
-        irImageFrame.Set(Napi::String::New(env, "imageLength"), Napi::Number::New(env, jsFrame.irImageFrame.image_length));
-        irImageFrame.Set(Napi::String::New(env, "width"), Napi::Number::New(env, jsFrame.irImageFrame.width));
-        irImageFrame.Set(Napi::String::New(env, "height"), Napi::Number::New(env, jsFrame.irImageFrame.height));
-        irImageFrame.Set(Napi::String::New(env, "strideBytes"), Napi::Number::New(env, jsFrame.irImageFrame.stride_bytes));
-        irImageFrame.Set(Napi::String::New(env, "deviceTimestamp"), Napi::Number::New(env, jsFrame.irImageFrame.device_timestamp));
-        irImageFrame.Set(Napi::String::New(env, "systemTimestamp"), Napi::Number::New(env, jsFrame.irImageFrame.system_timestamp));
-        data.Set(Napi::String::New(env, "irImageFrame"), irImageFrame);
-      }
-      {
-        Napi::Object depthToColorImageFrame = Napi::Object::New(env);
-        Napi::Buffer<uint8_t> imageData = Napi::Buffer<uint8_t>::New(env, jsFrame.depthToColorImageFrame.image_data, jsFrame.depthToColorImageFrame.image_length);
-        depthToColorImageFrame.Set(Napi::String::New(env, "imageData"), imageData);
-        depthToColorImageFrame.Set(Napi::String::New(env, "imageLength"), Napi::Number::New(env, jsFrame.depthToColorImageFrame.image_length));
-        depthToColorImageFrame.Set(Napi::String::New(env, "width"), Napi::Number::New(env, jsFrame.depthToColorImageFrame.width));
-        depthToColorImageFrame.Set(Napi::String::New(env, "height"), Napi::Number::New(env, jsFrame.depthToColorImageFrame.height));
-        depthToColorImageFrame.Set(Napi::String::New(env, "strideBytes"), Napi::Number::New(env, jsFrame.depthToColorImageFrame.stride_bytes));
-        data.Set(Napi::String::New(env, "depthToColorImageFrame"), depthToColorImageFrame);
-      }
-      {
-        Napi::Object colorToDepthImageFrame = Napi::Object::New(env);
-        Napi::Buffer<uint8_t> imageData = Napi::Buffer<uint8_t>::New(env, jsFrame.colorToDepthImageFrame.image_data, jsFrame.colorToDepthImageFrame.image_length);
-        colorToDepthImageFrame.Set(Napi::String::New(env, "imageData"), imageData);
-        colorToDepthImageFrame.Set(Napi::String::New(env, "imageLength"), Napi::Number::New(env, jsFrame.colorToDepthImageFrame.image_length));
-        colorToDepthImageFrame.Set(Napi::String::New(env, "width"), Napi::Number::New(env, jsFrame.colorToDepthImageFrame.width));
-        colorToDepthImageFrame.Set(Napi::String::New(env, "height"), Napi::Number::New(env, jsFrame.colorToDepthImageFrame.height));
-        colorToDepthImageFrame.Set(Napi::String::New(env, "strideBytes"), Napi::Number::New(env, jsFrame.colorToDepthImageFrame.stride_bytes));
-        data.Set(Napi::String::New(env, "colorToDepthImageFrame"), colorToDepthImageFrame);
-      }
-      {
+          Napi::Object data = Napi::Object::New(env);
+          {
+            Napi::Object imu = Napi::Object::New(env);
+            imu.Set(Napi::String::New(env, "temperature"), Napi::Number::New(env, jsFrame.imuSample.temperature));
+            imu.Set(Napi::String::New(env, "accX"), Napi::Number::New(env, jsFrame.imuSample.accX));
+            imu.Set(Napi::String::New(env, "accY"), Napi::Number::New(env, jsFrame.imuSample.accY));
+            imu.Set(Napi::String::New(env, "accZ"), Napi::Number::New(env, jsFrame.imuSample.accZ));
+            imu.Set(Napi::String::New(env, "accTimestamp"), Napi::Number::New(env, jsFrame.imuSample.accTimestamp));
+            imu.Set(Napi::String::New(env, "gyroX"), Napi::Number::New(env, jsFrame.imuSample.gyroX));
+            imu.Set(Napi::String::New(env, "gyroY"), Napi::Number::New(env, jsFrame.imuSample.gyroY));
+            imu.Set(Napi::String::New(env, "gyroZ"), Napi::Number::New(env, jsFrame.imuSample.gyroZ));
+            imu.Set(Napi::String::New(env, "gyroTimestamp"), Napi::Number::New(env, jsFrame.imuSample.gyroTimestamp));
+            data.Set(Napi::String::New(env, "imu"), imu);
+          }
+          {
+            Napi::Object colorImageFrame = Napi::Object::New(env);
+            Napi::Buffer<uint8_t> imageData = Napi::Buffer<uint8_t>::New(env, jsFrame.colorImageFrame.image_data, jsFrame.colorImageFrame.image_length);
+            colorImageFrame.Set(Napi::String::New(env, "imageData"), imageData);
+            colorImageFrame.Set(Napi::String::New(env, "imageLength"), Napi::Number::New(env, jsFrame.colorImageFrame.image_length));
+            colorImageFrame.Set(Napi::String::New(env, "width"), Napi::Number::New(env, jsFrame.colorImageFrame.width));
+            colorImageFrame.Set(Napi::String::New(env, "height"), Napi::Number::New(env, jsFrame.colorImageFrame.height));
+            colorImageFrame.Set(Napi::String::New(env, "strideBytes"), Napi::Number::New(env, jsFrame.colorImageFrame.stride_bytes));
+            colorImageFrame.Set(Napi::String::New(env, "deviceTimestamp"), Napi::Number::New(env, jsFrame.colorImageFrame.device_timestamp));
+            colorImageFrame.Set(Napi::String::New(env, "systemTimestamp"), Napi::Number::New(env, jsFrame.colorImageFrame.system_timestamp));
+            data.Set(Napi::String::New(env, "colorImageFrame"), colorImageFrame);
+          }
+          {
+            Napi::Object depthImageFrame = Napi::Object::New(env);
+            Napi::Buffer<uint8_t> imageData = Napi::Buffer<uint8_t>::New(env, jsFrame.depthImageFrame.image_data, jsFrame.depthImageFrame.image_length);
+            depthImageFrame.Set(Napi::String::New(env, "imageData"), imageData);
+            depthImageFrame.Set(Napi::String::New(env, "imageLength"), Napi::Number::New(env, jsFrame.depthImageFrame.image_length));
+            depthImageFrame.Set(Napi::String::New(env, "width"), Napi::Number::New(env, jsFrame.depthImageFrame.width));
+            depthImageFrame.Set(Napi::String::New(env, "height"), Napi::Number::New(env, jsFrame.depthImageFrame.height));
+            depthImageFrame.Set(Napi::String::New(env, "strideBytes"), Napi::Number::New(env, jsFrame.depthImageFrame.stride_bytes));
+            depthImageFrame.Set(Napi::String::New(env, "deviceTimestamp"), Napi::Number::New(env, jsFrame.depthImageFrame.device_timestamp));
+            depthImageFrame.Set(Napi::String::New(env, "systemTimestamp"), Napi::Number::New(env, jsFrame.depthImageFrame.system_timestamp));
+            data.Set(Napi::String::New(env, "depthImageFrame"), depthImageFrame);
+          }
+          {
+            Napi::Object irImageFrame = Napi::Object::New(env);
+            Napi::Buffer<uint8_t> imageData = Napi::Buffer<uint8_t>::New(env, jsFrame.irImageFrame.image_data, jsFrame.irImageFrame.image_length);
+            irImageFrame.Set(Napi::String::New(env, "imageData"), imageData);
+            irImageFrame.Set(Napi::String::New(env, "imageLength"), Napi::Number::New(env, jsFrame.irImageFrame.image_length));
+            irImageFrame.Set(Napi::String::New(env, "width"), Napi::Number::New(env, jsFrame.irImageFrame.width));
+            irImageFrame.Set(Napi::String::New(env, "height"), Napi::Number::New(env, jsFrame.irImageFrame.height));
+            irImageFrame.Set(Napi::String::New(env, "strideBytes"), Napi::Number::New(env, jsFrame.irImageFrame.stride_bytes));
+            irImageFrame.Set(Napi::String::New(env, "deviceTimestamp"), Napi::Number::New(env, jsFrame.irImageFrame.device_timestamp));
+            irImageFrame.Set(Napi::String::New(env, "systemTimestamp"), Napi::Number::New(env, jsFrame.irImageFrame.system_timestamp));
+            data.Set(Napi::String::New(env, "irImageFrame"), irImageFrame);
+          }
+          {
+            Napi::Object depthToColorImageFrame = Napi::Object::New(env);
+            Napi::Buffer<uint8_t> imageData = Napi::Buffer<uint8_t>::New(env, jsFrame.depthToColorImageFrame.image_data, jsFrame.depthToColorImageFrame.image_length);
+            depthToColorImageFrame.Set(Napi::String::New(env, "imageData"), imageData);
+            depthToColorImageFrame.Set(Napi::String::New(env, "imageLength"), Napi::Number::New(env, jsFrame.depthToColorImageFrame.image_length));
+            depthToColorImageFrame.Set(Napi::String::New(env, "width"), Napi::Number::New(env, jsFrame.depthToColorImageFrame.width));
+            depthToColorImageFrame.Set(Napi::String::New(env, "height"), Napi::Number::New(env, jsFrame.depthToColorImageFrame.height));
+            depthToColorImageFrame.Set(Napi::String::New(env, "strideBytes"), Napi::Number::New(env, jsFrame.depthToColorImageFrame.stride_bytes));
+            data.Set(Napi::String::New(env, "depthToColorImageFrame"), depthToColorImageFrame);
+          }
+          {
+            Napi::Object colorToDepthImageFrame = Napi::Object::New(env);
+            Napi::Buffer<uint8_t> imageData = Napi::Buffer<uint8_t>::New(env, jsFrame.colorToDepthImageFrame.image_data, jsFrame.colorToDepthImageFrame.image_length);
+            colorToDepthImageFrame.Set(Napi::String::New(env, "imageData"), imageData);
+            colorToDepthImageFrame.Set(Napi::String::New(env, "imageLength"), Napi::Number::New(env, jsFrame.colorToDepthImageFrame.image_length));
+            colorToDepthImageFrame.Set(Napi::String::New(env, "width"), Napi::Number::New(env, jsFrame.colorToDepthImageFrame.width));
+            colorToDepthImageFrame.Set(Napi::String::New(env, "height"), Napi::Number::New(env, jsFrame.colorToDepthImageFrame.height));
+            colorToDepthImageFrame.Set(Napi::String::New(env, "strideBytes"), Napi::Number::New(env, jsFrame.colorToDepthImageFrame.stride_bytes));
+            data.Set(Napi::String::New(env, "colorToDepthImageFrame"), colorToDepthImageFrame);
+          }
+          {
 #ifdef KINECT_AZURE_ENABLE_BODY_TRACKING
-        Napi::Object bodyFrame = Napi::Object::New(env);
-        {
-          {
-            Napi::Object bodyIndexMapImageFrame = Napi::Object::New(env);
-            Napi::Buffer<uint8_t> imageData = Napi::Buffer<uint8_t>::New(env, jsFrame.bodyFrame.bodyIndexMapImageFrame.image_data, jsFrame.bodyFrame.bodyIndexMapImageFrame.image_length);
-            bodyIndexMapImageFrame.Set(Napi::String::New(env, "imageData"), imageData);
-            bodyIndexMapImageFrame.Set(Napi::String::New(env, "imageLength"), Napi::Number::New(env, jsFrame.bodyFrame.bodyIndexMapImageFrame.image_length));
-            bodyIndexMapImageFrame.Set(Napi::String::New(env, "width"), Napi::Number::New(env, jsFrame.bodyFrame.bodyIndexMapImageFrame.width));
-            bodyIndexMapImageFrame.Set(Napi::String::New(env, "height"), Napi::Number::New(env, jsFrame.bodyFrame.bodyIndexMapImageFrame.height));
-            bodyIndexMapImageFrame.Set(Napi::String::New(env, "strideBytes"), Napi::Number::New(env, jsFrame.bodyFrame.bodyIndexMapImageFrame.stride_bytes));
-            bodyFrame.Set(Napi::String::New(env, "bodyIndexMapImageFrame"), bodyIndexMapImageFrame);
-          }
-          {
-            Napi::Object bodyIndexMapToColorImageFrame = Napi::Object::New(env);
-            Napi::Buffer<uint8_t> imageData = Napi::Buffer<uint8_t>::New(env, jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.image_data, jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.image_length);
-            bodyIndexMapToColorImageFrame.Set(Napi::String::New(env, "imageData"), imageData);
-            bodyIndexMapToColorImageFrame.Set(Napi::String::New(env, "imageLength"), Napi::Number::New(env, jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.image_length));
-            bodyIndexMapToColorImageFrame.Set(Napi::String::New(env, "width"), Napi::Number::New(env, jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.width));
-            bodyIndexMapToColorImageFrame.Set(Napi::String::New(env, "height"), Napi::Number::New(env, jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.height));
-            bodyIndexMapToColorImageFrame.Set(Napi::String::New(env, "strideBytes"), Napi::Number::New(env, jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.stride_bytes));
-            bodyFrame.Set(Napi::String::New(env, "bodyIndexMapToColorImageFrame"), bodyIndexMapToColorImageFrame);
-          }
-          bodyFrame.Set(Napi::String::New(env, "numBodies"), Napi::Number::New(env, jsFrame.bodyFrame.numBodies));
-          Napi::Array bodies = Napi::Array::New(env, jsFrame.bodyFrame.numBodies);
-          for (size_t i = 0; i < jsFrame.bodyFrame.numBodies; i++)
-          {
-            Napi::Object body = Napi::Object::New(env);
-            body.Set(Napi::String::New(env, "id"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].id));
-            Napi::Object skeleton = Napi::Object::New(env);
+            Napi::Object bodyFrame = Napi::Object::New(env);
             {
-              Napi::Array joints = Napi::Array::New(env, K4ABT_JOINT_COUNT);
-              for (size_t j = 0; j < K4ABT_JOINT_COUNT; j++)
               {
-                Napi::Object joint = Napi::Object::New(env);
-
-                joint.Set(Napi::String::New(env, "index"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].index));
-
-                joint.Set(Napi::String::New(env, "cameraX"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].cameraX));
-                joint.Set(Napi::String::New(env, "cameraY"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].cameraY));
-                joint.Set(Napi::String::New(env, "cameraZ"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].cameraZ));
-
-                joint.Set(Napi::String::New(env, "orientationX"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].orientationX));
-                joint.Set(Napi::String::New(env, "orientationY"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].orientationY));
-                joint.Set(Napi::String::New(env, "orientationZ"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].orientationZ));
-                joint.Set(Napi::String::New(env, "orientationW"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].orientationW));
-
-                joint.Set(Napi::String::New(env, "colorX"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].colorX));
-                joint.Set(Napi::String::New(env, "colorY"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].colorY));
-
-                joint.Set(Napi::String::New(env, "depthX"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].depthX));
-                joint.Set(Napi::String::New(env, "depthY"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].depthY));
-
-                joint.Set(Napi::String::New(env, "confidence"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].confidence));
-
-                joints.Set(Napi::Number::New(env, j), joint);
+                Napi::Object bodyIndexMapImageFrame = Napi::Object::New(env);
+                Napi::Buffer<uint8_t> imageData = Napi::Buffer<uint8_t>::New(env, jsFrame.bodyFrame.bodyIndexMapImageFrame.image_data, jsFrame.bodyFrame.bodyIndexMapImageFrame.image_length);
+                bodyIndexMapImageFrame.Set(Napi::String::New(env, "imageData"), imageData);
+                bodyIndexMapImageFrame.Set(Napi::String::New(env, "imageLength"), Napi::Number::New(env, jsFrame.bodyFrame.bodyIndexMapImageFrame.image_length));
+                bodyIndexMapImageFrame.Set(Napi::String::New(env, "width"), Napi::Number::New(env, jsFrame.bodyFrame.bodyIndexMapImageFrame.width));
+                bodyIndexMapImageFrame.Set(Napi::String::New(env, "height"), Napi::Number::New(env, jsFrame.bodyFrame.bodyIndexMapImageFrame.height));
+                bodyIndexMapImageFrame.Set(Napi::String::New(env, "strideBytes"), Napi::Number::New(env, jsFrame.bodyFrame.bodyIndexMapImageFrame.stride_bytes));
+                bodyFrame.Set(Napi::String::New(env, "bodyIndexMapImageFrame"), bodyIndexMapImageFrame);
               }
-              skeleton.Set(Napi::String::New(env, "joints"), joints);
+              {
+                Napi::Object bodyIndexMapToColorImageFrame = Napi::Object::New(env);
+                Napi::Buffer<uint8_t> imageData = Napi::Buffer<uint8_t>::New(env, jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.image_data, jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.image_length);
+                bodyIndexMapToColorImageFrame.Set(Napi::String::New(env, "imageData"), imageData);
+                bodyIndexMapToColorImageFrame.Set(Napi::String::New(env, "imageLength"), Napi::Number::New(env, jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.image_length));
+                bodyIndexMapToColorImageFrame.Set(Napi::String::New(env, "width"), Napi::Number::New(env, jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.width));
+                bodyIndexMapToColorImageFrame.Set(Napi::String::New(env, "height"), Napi::Number::New(env, jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.height));
+                bodyIndexMapToColorImageFrame.Set(Napi::String::New(env, "strideBytes"), Napi::Number::New(env, jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.stride_bytes));
+                bodyFrame.Set(Napi::String::New(env, "bodyIndexMapToColorImageFrame"), bodyIndexMapToColorImageFrame);
+              }
+              bodyFrame.Set(Napi::String::New(env, "numBodies"), Napi::Number::New(env, jsFrame.bodyFrame.numBodies));
+              Napi::Array bodies = Napi::Array::New(env, jsFrame.bodyFrame.numBodies);
+              for (size_t i = 0; i < jsFrame.bodyFrame.numBodies; i++)
+              {
+                Napi::Object body = Napi::Object::New(env);
+                body.Set(Napi::String::New(env, "id"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].id));
+                Napi::Object skeleton = Napi::Object::New(env);
+                {
+                  Napi::Array joints = Napi::Array::New(env, K4ABT_JOINT_COUNT);
+                  for (size_t j = 0; j < K4ABT_JOINT_COUNT; j++)
+                  {
+                    Napi::Object joint = Napi::Object::New(env);
+
+                    joint.Set(Napi::String::New(env, "index"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].index));
+
+                    joint.Set(Napi::String::New(env, "cameraX"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].cameraX));
+                    joint.Set(Napi::String::New(env, "cameraY"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].cameraY));
+                    joint.Set(Napi::String::New(env, "cameraZ"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].cameraZ));
+
+                    joint.Set(Napi::String::New(env, "orientationX"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].orientationX));
+                    joint.Set(Napi::String::New(env, "orientationY"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].orientationY));
+                    joint.Set(Napi::String::New(env, "orientationZ"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].orientationZ));
+                    joint.Set(Napi::String::New(env, "orientationW"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].orientationW));
+
+                    joint.Set(Napi::String::New(env, "colorX"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].colorX));
+                    joint.Set(Napi::String::New(env, "colorY"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].colorY));
+
+                    joint.Set(Napi::String::New(env, "depthX"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].depthX));
+                    joint.Set(Napi::String::New(env, "depthY"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].depthY));
+
+                    joint.Set(Napi::String::New(env, "confidence"), Napi::Number::New(env, jsFrame.bodyFrame.bodies[i].skeleton.joints[j].confidence));
+
+                    joints.Set(Napi::Number::New(env, j), joint);
+                  }
+                  skeleton.Set(Napi::String::New(env, "joints"), joints);
+                }
+                body.Set(Napi::String::New(env, "skeleton"), skeleton);
+                bodies.Set(Napi::Number::New(env, i), body);
+              }
+              bodyFrame.Set(Napi::String::New(env, "bodies"), bodies);
             }
-            body.Set(Napi::String::New(env, "skeleton"), skeleton);
-            bodies.Set(Napi::Number::New(env, i), body);
-          }
-          bodyFrame.Set(Napi::String::New(env, "bodies"), bodies);
-        }
-        data.Set(Napi::String::New(env, "bodyFrame"), bodyFrame);
+            data.Set(Napi::String::New(env, "bodyFrame"), bodyFrame);
 #endif // KINECT_AZURE_ENABLE_BODY_TRACKING
-      }
-
-      // printf("[kinect_azure.cc] jsCallback.Call\n");
-      jsCallback.Call({data});
-      // printf("[kinect_azure.cc] callback done\n");
-      mtx.unlock();
-    };
-
-    uint8_t *processed_color_data = NULL;
-    uint8_t *processed_depth_data = NULL;
-
-    JSFrame jsFrame;
-    while (is_listening)
-    {
-      k4a_capture_t sensor_capture;
-      if (is_playing)
-      {
-        if (is_paused && !is_seeking)
-          continue;
-
-        is_seeking = false;
-        k4a_stream_result_t get_stream_result = k4a_playback_get_next_capture(playback_handle, &sensor_capture);
-        if (get_stream_result == K4A_STREAM_RESULT_SUCCEEDED)
-        {
-          int milliseconds = round(1000 / g_playbackProps.playback_fps);
-          std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
-        }
-        else if (get_stream_result == K4A_STREAM_RESULT_EOF)
-        {
-          // End of file reached
-          k4a_playback_seek_timestamp(playback_handle, 0, K4A_PLAYBACK_SEEK_BEGIN);
-          continue;
-        }
-        else
-        {
-          continue;
-        }
-      }
-      else
-      {
-        k4a_wait_result_t get_capture_result = k4a_device_get_capture(g_device, &sensor_capture, 0);
-        if (get_capture_result != K4A_WAIT_RESULT_SUCCEEDED)
-        {
-          // printf("[kinect_azure.cc] get_capture_result != K4A_WAIT_RESULT_SUCCEEDED\n");
-          continue;
-        }
-      }
-
-      // Create new data
-      mtx.lock();
-      // printf("[kinect_azure.cc] jsFrame.reset\n");
-      jsFrame.reset();
-      k4a_imu_sample_t imu_sample;
-      k4a_image_t color_image = NULL;
-      k4a_image_t depth_image = NULL;
-      k4a_image_t ir_image = NULL;
-      k4a_image_t depth_to_color_image = NULL;
-      k4a_image_t color_to_depth_image = NULL;
-      if (g_customDeviceConfig.include_imu_sample)
-      {
-        while (k4a_device_get_imu_sample(g_device, &imu_sample, 0) == K4A_WAIT_RESULT_SUCCEEDED)
-        {
-          jsFrame.imuSample.temperature = imu_sample.temperature;
-          jsFrame.imuSample.accX = imu_sample.acc_sample.xyz.x;
-          jsFrame.imuSample.accY = imu_sample.acc_sample.xyz.y;
-          jsFrame.imuSample.accZ = imu_sample.acc_sample.xyz.z;
-          jsFrame.imuSample.accTimestamp = imu_sample.acc_timestamp_usec;
-          jsFrame.imuSample.gyroX = imu_sample.gyro_sample.xyz.x;
-          jsFrame.imuSample.gyroY = imu_sample.gyro_sample.xyz.y;
-          jsFrame.imuSample.gyroZ = imu_sample.gyro_sample.xyz.z;
-          jsFrame.imuSample.gyroTimestamp = imu_sample.gyro_timestamp_usec;
-        }
-      }
-      if (g_deviceConfig.depth_mode != K4A_DEPTH_MODE_OFF)
-      {
-        // printf("[kinect_azure.cc] k4a_capture_get_depth_image\n");
-        // if it is not passive IR, capture the depth image
-        if (g_deviceConfig.depth_mode != K4A_DEPTH_MODE_PASSIVE_IR)
-        {
-          depth_image = k4a_capture_get_depth_image(sensor_capture);
-          if (depth_image != NULL)
-          {
-            jsFrame.depthImageFrame.image_length = k4a_image_get_size(depth_image);
-            jsFrame.depthImageFrame.width = k4a_image_get_width_pixels(depth_image);
-            jsFrame.depthImageFrame.height = k4a_image_get_height_pixels(depth_image);
-            jsFrame.depthImageFrame.stride_bytes = k4a_image_get_stride_bytes(depth_image);
-            jsFrame.depthImageFrame.image_data = new uint8_t[jsFrame.depthImageFrame.image_length];
-            jsFrame.depthImageFrame.device_timestamp = k4a_image_get_device_timestamp_usec(depth_image);
-            jsFrame.depthImageFrame.system_timestamp = k4a_image_get_system_timestamp_nsec(depth_image);
           }
-        }
-        // capture the IR image
-        ir_image = k4a_capture_get_ir_image(sensor_capture);
-        if (ir_image != NULL)
-        {
-          jsFrame.irImageFrame.image_length = k4a_image_get_size(ir_image);
-          jsFrame.irImageFrame.width = k4a_image_get_width_pixels(ir_image);
-          jsFrame.irImageFrame.height = k4a_image_get_height_pixels(ir_image);
-          jsFrame.irImageFrame.stride_bytes = k4a_image_get_stride_bytes(ir_image);
-          jsFrame.irImageFrame.image_data = new uint8_t[jsFrame.irImageFrame.image_length];
-          jsFrame.irImageFrame.device_timestamp = k4a_image_get_device_timestamp_usec(ir_image);
-          jsFrame.irImageFrame.system_timestamp = k4a_image_get_system_timestamp_nsec(ir_image);
-        }
-      }
-      if (g_deviceConfig.color_resolution != K4A_COLOR_RESOLUTION_OFF)
-      {
-        // printf("[kinect_azure.cc] k4a_capture_get_color_image\n");
-        color_image = k4a_capture_get_color_image(sensor_capture);
-        if (color_image != NULL)
-        {
-          jsFrame.colorImageFrame.image_length = k4a_image_get_size(color_image);
-          jsFrame.colorImageFrame.width = k4a_image_get_width_pixels(color_image);
-          jsFrame.colorImageFrame.height = k4a_image_get_height_pixels(color_image);
-          jsFrame.colorImageFrame.stride_bytes = k4a_image_get_stride_bytes(color_image);
-          jsFrame.colorImageFrame.image_data = new uint8_t[jsFrame.colorImageFrame.image_length];
-          jsFrame.colorImageFrame.device_timestamp = k4a_image_get_device_timestamp_usec(color_image);
-          jsFrame.colorImageFrame.system_timestamp = k4a_image_get_system_timestamp_nsec(color_image);
-          colorTimestamp = (double)k4a_image_get_device_timestamp_usec(color_image);
-        }
-      }
 
-      if (g_customDeviceConfig.include_depth_to_color)
-      {
+          // printf("[kinect_azure.cc] jsCallback.Call\n");
+          jsCallback.Call({data});
+          // printf("[kinect_azure.cc] callback done\n");
+          mtx.unlock();
+        };
 
-        if (
-            k4a_image_create(
-                K4A_IMAGE_FORMAT_DEPTH16,
-                jsFrame.colorImageFrame.width, jsFrame.colorImageFrame.height,
-                jsFrame.colorImageFrame.width * 2,
-                &depth_to_color_image) == K4A_RESULT_SUCCEEDED)
+        uint8_t *processed_color_data = NULL;
+        uint8_t *processed_depth_data = NULL;
+
+        JSFrame jsFrame;
+        while (is_listening)
         {
-          jsFrame.depthToColorImageFrame.height = 10;
-
-          if (
-              k4a_transformation_depth_image_to_color_camera(transformer, depth_image, depth_to_color_image) == K4A_RESULT_SUCCEEDED)
+          k4a_capture_t sensor_capture;
+          if (is_playing)
           {
-            jsFrame.depthToColorImageFrame.width = 10;
+            if (is_paused && !is_seeking)
+              continue;
 
-            jsFrame.depthToColorImageFrame.width = k4a_image_get_width_pixels(depth_to_color_image);
-            jsFrame.depthToColorImageFrame.height = k4a_image_get_height_pixels(depth_to_color_image);
-
-            if (g_customDeviceConfig.depth_to_greyscale == true || g_customDeviceConfig.depth_to_redblue == true)
+            is_seeking = false;
+            k4a_stream_result_t get_stream_result = k4a_playback_get_next_capture(playback_handle, &sensor_capture);
+            if (get_stream_result == K4A_STREAM_RESULT_SUCCEEDED)
             {
-              jsFrame.depthToColorImageFrame.image_length = k4a_image_get_size(color_image);
-              jsFrame.depthToColorImageFrame.stride_bytes = k4a_image_get_stride_bytes(color_image);
-              jsFrame.depthToColorImageFrame.image_data = new uint8_t[jsFrame.colorImageFrame.image_length];
+              int milliseconds = round(1000 / g_playbackProps.playback_fps);
+              std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
+            }
+            else if (get_stream_result == K4A_STREAM_RESULT_EOF)
+            {
+              // End of file reached
+              k4a_playback_seek_timestamp(playback_handle, 0, K4A_PLAYBACK_SEEK_BEGIN);
+              continue;
             }
             else
             {
-              jsFrame.depthToColorImageFrame.image_length = k4a_image_get_size(depth_to_color_image);
-              jsFrame.depthToColorImageFrame.stride_bytes = k4a_image_get_stride_bytes(depth_to_color_image);
-              jsFrame.depthToColorImageFrame.image_data = new uint8_t[jsFrame.depthToColorImageFrame.image_length];
+              continue;
             }
           }
           else
           {
-            jsFrame.depthToColorImageFrame.width = 1;
-          }
-        }
-      }
-      if (g_customDeviceConfig.include_color_to_depth)
-      {
-        if (k4a_image_create(K4A_IMAGE_FORMAT_COLOR_BGRA32, jsFrame.depthImageFrame.width, jsFrame.depthImageFrame.height, jsFrame.depthImageFrame.width * 4, &color_to_depth_image) == K4A_RESULT_SUCCEEDED)
-        {
-          if (k4a_transformation_color_image_to_depth_camera(transformer, depth_image, color_image, color_to_depth_image) == K4A_RESULT_SUCCEEDED)
-          {
-            jsFrame.colorToDepthImageFrame.image_length = k4a_image_get_size(color_to_depth_image);
-            jsFrame.colorToDepthImageFrame.width = k4a_image_get_width_pixels(color_to_depth_image);
-            jsFrame.colorToDepthImageFrame.height = k4a_image_get_height_pixels(color_to_depth_image);
-            jsFrame.colorToDepthImageFrame.stride_bytes = k4a_image_get_stride_bytes(color_to_depth_image);
-            jsFrame.colorToDepthImageFrame.image_data = new uint8_t[jsFrame.colorToDepthImageFrame.image_length];
-          }
-        }
-      }
-
-      if (depth_image != NULL)
-      {
-        uint8_t *image_data = k4a_image_get_buffer(depth_image);
-        memcpy(jsFrame.depthImageFrame.image_data, image_data, jsFrame.depthImageFrame.image_length);
-      }
-
-      if (ir_image != NULL)
-      {
-        uint8_t *image_data = k4a_image_get_buffer(ir_image);
-        memcpy(jsFrame.irImageFrame.image_data, image_data, jsFrame.irImageFrame.image_length);
-      }
-
-      if (color_image != NULL)
-      {
-        uint8_t *image_data = k4a_image_get_buffer(color_image);
-        if (processed_color_data == NULL)
-          processed_color_data = new uint8_t[jsFrame.colorImageFrame.image_length];
-
-        if (g_customDeviceConfig.flip_BGRA_to_RGBA == true || g_customDeviceConfig.apply_depth_to_alpha == true)
-        {
-          if (g_customDeviceConfig.flip_BGRA_to_RGBA == true)
-          {
-            for (int i = 0; i < jsFrame.colorImageFrame.image_length; i += 4)
+            k4a_wait_result_t get_capture_result = k4a_device_get_capture(g_device, &sensor_capture, 0);
+            if (get_capture_result != K4A_WAIT_RESULT_SUCCEEDED)
             {
-              processed_color_data[i] = image_data[i + 2];
-              processed_color_data[i + 1] = image_data[i + 1];
-              processed_color_data[i + 2] = image_data[i];
-              processed_color_data[i + 3] = image_data[i + 3];
+              // printf("[kinect_azure.cc] get_capture_result != K4A_WAIT_RESULT_SUCCEEDED\n");
+              continue;
             }
           }
-          else
-          {
-            memcpy(processed_color_data, image_data, jsFrame.colorImageFrame.image_length);
-          }
-          if (g_customDeviceConfig.apply_depth_to_alpha == true)
-          {
-            depthPixelIndex = 0;
-            depth_to_color_data = k4a_image_get_buffer(depth_to_color_image);
 
-            for (int i = 0; i < jsFrame.colorImageFrame.image_length; i += 4)
+          // Create new data
+          mtx.lock();
+          // printf("[kinect_azure.cc] jsFrame.reset\n");
+          jsFrame.reset();
+          k4a_imu_sample_t imu_sample;
+          k4a_image_t color_image = NULL;
+          k4a_image_t depth_image = NULL;
+          k4a_image_t ir_image = NULL;
+          k4a_image_t depth_to_color_image = NULL;
+          k4a_image_t color_to_depth_image = NULL;
+          if (g_customDeviceConfig.include_imu_sample)
+          {
+            while (k4a_device_get_imu_sample(g_device, &imu_sample, 0) == K4A_WAIT_RESULT_SUCCEEDED)
             {
-              combined = (depth_to_color_data[depthPixelIndex + 1] << 8) | (depth_to_color_data[depthPixelIndex] & 0xff);
-              normalizedValue = map(combined, g_customDeviceConfig.min_depth, g_customDeviceConfig.max_depth, 255, 0);
-              if (normalizedValue >= 0xF0)
-                normalizedValue = 0;
-              processed_color_data[i + 3] = normalizedValue;
-              depthPixelIndex += 2;
+              jsFrame.imuSample.temperature = imu_sample.temperature;
+              jsFrame.imuSample.accX = imu_sample.acc_sample.xyz.x;
+              jsFrame.imuSample.accY = imu_sample.acc_sample.xyz.y;
+              jsFrame.imuSample.accZ = imu_sample.acc_sample.xyz.z;
+              jsFrame.imuSample.accTimestamp = imu_sample.acc_timestamp_usec;
+              jsFrame.imuSample.gyroX = imu_sample.gyro_sample.xyz.x;
+              jsFrame.imuSample.gyroY = imu_sample.gyro_sample.xyz.y;
+              jsFrame.imuSample.gyroZ = imu_sample.gyro_sample.xyz.z;
+              jsFrame.imuSample.gyroTimestamp = imu_sample.gyro_timestamp_usec;
             }
           }
-          memcpy(jsFrame.colorImageFrame.image_data, processed_color_data, jsFrame.colorImageFrame.image_length);
-        }
-        else
-        {
-          memcpy(jsFrame.colorImageFrame.image_data, image_data, jsFrame.colorImageFrame.image_length);
-        }
-      }
-
-      if (depth_to_color_image != NULL)
-      {
-        uint8_t *image_data = k4a_image_get_buffer(depth_to_color_image);
-        if (g_customDeviceConfig.depth_to_greyscale == true || g_customDeviceConfig.depth_to_redblue == true)
-        {
-
-          if (processed_depth_data == NULL)
-            processed_depth_data = new uint8_t[jsFrame.colorImageFrame.image_length];
-
-          depthPixelIndex = 0;
-          if (g_customDeviceConfig.depth_to_greyscale == true)
+          if (g_deviceConfig.depth_mode != K4A_DEPTH_MODE_OFF)
           {
-
-            for (int i = 0; i < jsFrame.depthToColorImageFrame.image_length; i += 4)
+            // printf("[kinect_azure.cc] k4a_capture_get_depth_image\n");
+            // if it is not passive IR, capture the depth image
+            if (g_deviceConfig.depth_mode != K4A_DEPTH_MODE_PASSIVE_IR)
             {
-              combined = (image_data[depthPixelIndex + 1] << 8) | (image_data[depthPixelIndex] & 0xff);
-              normalizedValue = map(combined, g_customDeviceConfig.min_depth, g_customDeviceConfig.max_depth, 255, 0);
-              if (normalizedValue >= 0xF0)
-                normalizedValue = 0;
-              processed_depth_data[i] = normalizedValue;
-              processed_depth_data[i + 1] = normalizedValue;
-              processed_depth_data[i + 2] = normalizedValue;
-              processed_depth_data[i + 3] = 0xFF;
-              depthPixelIndex += 2;
+              depth_image = k4a_capture_get_depth_image(sensor_capture);
+              if (depth_image != NULL)
+              {
+                jsFrame.depthImageFrame.image_length = k4a_image_get_size(depth_image);
+                jsFrame.depthImageFrame.width = k4a_image_get_width_pixels(depth_image);
+                jsFrame.depthImageFrame.height = k4a_image_get_height_pixels(depth_image);
+                jsFrame.depthImageFrame.stride_bytes = k4a_image_get_stride_bytes(depth_image);
+                jsFrame.depthImageFrame.image_data = new uint8_t[jsFrame.depthImageFrame.image_length];
+                jsFrame.depthImageFrame.device_timestamp = k4a_image_get_device_timestamp_usec(depth_image);
+                jsFrame.depthImageFrame.system_timestamp = k4a_image_get_system_timestamp_nsec(depth_image);
+              }
+            }
+            // capture the IR image
+            ir_image = k4a_capture_get_ir_image(sensor_capture);
+            if (ir_image != NULL)
+            {
+              jsFrame.irImageFrame.image_length = k4a_image_get_size(ir_image);
+              jsFrame.irImageFrame.width = k4a_image_get_width_pixels(ir_image);
+              jsFrame.irImageFrame.height = k4a_image_get_height_pixels(ir_image);
+              jsFrame.irImageFrame.stride_bytes = k4a_image_get_stride_bytes(ir_image);
+              jsFrame.irImageFrame.image_data = new uint8_t[jsFrame.irImageFrame.image_length];
+              jsFrame.irImageFrame.device_timestamp = k4a_image_get_device_timestamp_usec(ir_image);
+              jsFrame.irImageFrame.system_timestamp = k4a_image_get_system_timestamp_nsec(ir_image);
             }
           }
-          else if (g_customDeviceConfig.depth_to_redblue == true)
+          if (g_deviceConfig.color_resolution != K4A_COLOR_RESOLUTION_OFF)
           {
-            for (int i = 0; i < jsFrame.depthToColorImageFrame.image_length; i += 4)
+            // printf("[kinect_azure.cc] k4a_capture_get_color_image\n");
+            color_image = k4a_capture_get_color_image(sensor_capture);
+            if (color_image != NULL)
             {
-              combined = std::min(g_customDeviceConfig.max_depth, std::max(g_customDeviceConfig.min_depth, image_data[depthPixelIndex + 1] << 8 | image_data[depthPixelIndex]));
-              float hue = ((float)(combined - g_customDeviceConfig.min_depth) / (float)(g_customDeviceConfig.max_depth - g_customDeviceConfig.min_depth));
-              hue = 1 - hue;
-              colorUtils::hsvToRgb(hue * 0xFF, 1.0f, 1.0f, rgb);
-              processed_depth_data[i] = rgb[0];
-              processed_depth_data[i + 1] = rgb[1];
-              processed_depth_data[i + 2] = rgb[2];
-              processed_depth_data[i + 3] = 0xFF;
-              depthPixelIndex += 2;
+              jsFrame.colorImageFrame.image_length = k4a_image_get_size(color_image);
+              jsFrame.colorImageFrame.width = k4a_image_get_width_pixels(color_image);
+              jsFrame.colorImageFrame.height = k4a_image_get_height_pixels(color_image);
+              jsFrame.colorImageFrame.stride_bytes = k4a_image_get_stride_bytes(color_image);
+              jsFrame.colorImageFrame.image_data = new uint8_t[jsFrame.colorImageFrame.image_length];
+              jsFrame.colorImageFrame.device_timestamp = k4a_image_get_device_timestamp_usec(color_image);
+              jsFrame.colorImageFrame.system_timestamp = k4a_image_get_system_timestamp_nsec(color_image);
+              colorTimestamp = (double)k4a_image_get_device_timestamp_usec(color_image);
             }
           }
-          memcpy(jsFrame.depthToColorImageFrame.image_data, processed_depth_data, jsFrame.depthToColorImageFrame.image_length);
-        }
-        else
-        {
-          memcpy(jsFrame.depthToColorImageFrame.image_data, image_data, jsFrame.depthToColorImageFrame.image_length);
-        }
-      }
-      if (color_to_depth_image != NULL)
-      {
-        uint8_t *image_data = k4a_image_get_buffer(color_to_depth_image);
-        memcpy(jsFrame.colorToDepthImageFrame.image_data, image_data, jsFrame.colorToDepthImageFrame.image_length);
-      }
+
+          if (g_customDeviceConfig.include_depth_to_color)
+          {
+
+            if (
+                k4a_image_create(
+                    K4A_IMAGE_FORMAT_DEPTH16,
+                    jsFrame.colorImageFrame.width, jsFrame.colorImageFrame.height,
+                    jsFrame.colorImageFrame.width * 2,
+                    &depth_to_color_image) == K4A_RESULT_SUCCEEDED)
+            {
+              jsFrame.depthToColorImageFrame.height = 10;
+
+              if (
+                  k4a_transformation_depth_image_to_color_camera(transformer, depth_image, depth_to_color_image) == K4A_RESULT_SUCCEEDED)
+              {
+                jsFrame.depthToColorImageFrame.width = 10;
+
+                jsFrame.depthToColorImageFrame.width = k4a_image_get_width_pixels(depth_to_color_image);
+                jsFrame.depthToColorImageFrame.height = k4a_image_get_height_pixels(depth_to_color_image);
+
+                if (g_customDeviceConfig.depth_to_greyscale == true || g_customDeviceConfig.depth_to_redblue == true)
+                {
+                  jsFrame.depthToColorImageFrame.image_length = k4a_image_get_size(color_image);
+                  jsFrame.depthToColorImageFrame.stride_bytes = k4a_image_get_stride_bytes(color_image);
+                  jsFrame.depthToColorImageFrame.image_data = new uint8_t[jsFrame.colorImageFrame.image_length];
+                }
+                else
+                {
+                  jsFrame.depthToColorImageFrame.image_length = k4a_image_get_size(depth_to_color_image);
+                  jsFrame.depthToColorImageFrame.stride_bytes = k4a_image_get_stride_bytes(depth_to_color_image);
+                  jsFrame.depthToColorImageFrame.image_data = new uint8_t[jsFrame.depthToColorImageFrame.image_length];
+                }
+              }
+              else
+              {
+                jsFrame.depthToColorImageFrame.width = 1;
+              }
+            }
+          }
+          if (g_customDeviceConfig.include_color_to_depth)
+          {
+            if (k4a_image_create(K4A_IMAGE_FORMAT_COLOR_BGRA32, jsFrame.depthImageFrame.width, jsFrame.depthImageFrame.height, jsFrame.depthImageFrame.width * 4, &color_to_depth_image) == K4A_RESULT_SUCCEEDED)
+            {
+              if (k4a_transformation_color_image_to_depth_camera(transformer, depth_image, color_image, color_to_depth_image) == K4A_RESULT_SUCCEEDED)
+              {
+                jsFrame.colorToDepthImageFrame.image_length = k4a_image_get_size(color_to_depth_image);
+                jsFrame.colorToDepthImageFrame.width = k4a_image_get_width_pixels(color_to_depth_image);
+                jsFrame.colorToDepthImageFrame.height = k4a_image_get_height_pixels(color_to_depth_image);
+                jsFrame.colorToDepthImageFrame.stride_bytes = k4a_image_get_stride_bytes(color_to_depth_image);
+                jsFrame.colorToDepthImageFrame.image_data = new uint8_t[jsFrame.colorToDepthImageFrame.image_length];
+              }
+            }
+          }
+
+          if (depth_image != NULL)
+          {
+            uint8_t *image_data = k4a_image_get_buffer(depth_image);
+            memcpy(jsFrame.depthImageFrame.image_data, image_data, jsFrame.depthImageFrame.image_length);
+          }
+
+          if (ir_image != NULL)
+          {
+            uint8_t *image_data = k4a_image_get_buffer(ir_image);
+            memcpy(jsFrame.irImageFrame.image_data, image_data, jsFrame.irImageFrame.image_length);
+          }
+
+          if (color_image != NULL)
+          {
+            uint8_t *image_data = k4a_image_get_buffer(color_image);
+            if (processed_color_data == NULL)
+              processed_color_data = new uint8_t[jsFrame.colorImageFrame.image_length];
+
+            if (g_customDeviceConfig.flip_BGRA_to_RGBA == true || g_customDeviceConfig.apply_depth_to_alpha == true)
+            {
+              if (g_customDeviceConfig.flip_BGRA_to_RGBA == true)
+              {
+                for (int i = 0; i < jsFrame.colorImageFrame.image_length; i += 4)
+                {
+                  processed_color_data[i] = image_data[i + 2];
+                  processed_color_data[i + 1] = image_data[i + 1];
+                  processed_color_data[i + 2] = image_data[i];
+                  processed_color_data[i + 3] = image_data[i + 3];
+                }
+              }
+              else
+              {
+                memcpy(processed_color_data, image_data, jsFrame.colorImageFrame.image_length);
+              }
+              if (g_customDeviceConfig.apply_depth_to_alpha == true)
+              {
+                depthPixelIndex = 0;
+                depth_to_color_data = k4a_image_get_buffer(depth_to_color_image);
+
+                for (int i = 0; i < jsFrame.colorImageFrame.image_length; i += 4)
+                {
+                  combined = (depth_to_color_data[depthPixelIndex + 1] << 8) | (depth_to_color_data[depthPixelIndex] & 0xff);
+                  normalizedValue = map(combined, g_customDeviceConfig.min_depth, g_customDeviceConfig.max_depth, 255, 0);
+                  if (normalizedValue >= 0xF0)
+                    normalizedValue = 0;
+                  processed_color_data[i + 3] = normalizedValue;
+                  depthPixelIndex += 2;
+                }
+              }
+              memcpy(jsFrame.colorImageFrame.image_data, processed_color_data, jsFrame.colorImageFrame.image_length);
+            }
+            else
+            {
+              memcpy(jsFrame.colorImageFrame.image_data, image_data, jsFrame.colorImageFrame.image_length);
+            }
+          }
+
+          if (depth_to_color_image != NULL)
+          {
+            uint8_t *image_data = k4a_image_get_buffer(depth_to_color_image);
+            if (g_customDeviceConfig.depth_to_greyscale == true || g_customDeviceConfig.depth_to_redblue == true)
+            {
+
+              if (processed_depth_data == NULL)
+                processed_depth_data = new uint8_t[jsFrame.colorImageFrame.image_length];
+
+              depthPixelIndex = 0;
+              if (g_customDeviceConfig.depth_to_greyscale == true)
+              {
+
+                for (int i = 0; i < jsFrame.depthToColorImageFrame.image_length; i += 4)
+                {
+                  combined = (image_data[depthPixelIndex + 1] << 8) | (image_data[depthPixelIndex] & 0xff);
+                  normalizedValue = map(combined, g_customDeviceConfig.min_depth, g_customDeviceConfig.max_depth, 255, 0);
+                  if (normalizedValue >= 0xF0)
+                    normalizedValue = 0;
+                  processed_depth_data[i] = normalizedValue;
+                  processed_depth_data[i + 1] = normalizedValue;
+                  processed_depth_data[i + 2] = normalizedValue;
+                  processed_depth_data[i + 3] = 0xFF;
+                  depthPixelIndex += 2;
+                }
+              }
+              else if (g_customDeviceConfig.depth_to_redblue == true)
+              {
+                for (int i = 0; i < jsFrame.depthToColorImageFrame.image_length; i += 4)
+                {
+                  combined = std::min(g_customDeviceConfig.max_depth, std::max(g_customDeviceConfig.min_depth, image_data[depthPixelIndex + 1] << 8 | image_data[depthPixelIndex]));
+                  float hue = ((float)(combined - g_customDeviceConfig.min_depth) / (float)(g_customDeviceConfig.max_depth - g_customDeviceConfig.min_depth));
+                  hue = 1 - hue;
+                  colorUtils::hsvToRgb(hue * 0xFF, 1.0f, 1.0f, rgb);
+                  processed_depth_data[i] = rgb[0];
+                  processed_depth_data[i + 1] = rgb[1];
+                  processed_depth_data[i + 2] = rgb[2];
+                  processed_depth_data[i + 3] = 0xFF;
+                  depthPixelIndex += 2;
+                }
+              }
+              memcpy(jsFrame.depthToColorImageFrame.image_data, processed_depth_data, jsFrame.depthToColorImageFrame.image_length);
+            }
+            else
+            {
+              memcpy(jsFrame.depthToColorImageFrame.image_data, image_data, jsFrame.depthToColorImageFrame.image_length);
+            }
+          }
+          if (color_to_depth_image != NULL)
+          {
+            uint8_t *image_data = k4a_image_get_buffer(color_to_depth_image);
+            memcpy(jsFrame.colorToDepthImageFrame.image_data, image_data, jsFrame.colorToDepthImageFrame.image_length);
+          }
 
 #ifdef KINECT_AZURE_ENABLE_BODY_TRACKING
-      // printf("[kinect_azure.cc] check tracker\n");
-      if (g_tracker != NULL)
-      {
-        // printf("[kinect_azure.cc] k4abt_tracker_enqueue_capture\n");
-        k4a_wait_result_t queue_capture_result = k4abt_tracker_enqueue_capture(g_tracker, sensor_capture, 0);
-        if (queue_capture_result == K4A_WAIT_RESULT_FAILED)
-        {
-          k4a_capture_release(sensor_capture);
-          mtx.unlock();
-          break;
-        }
-
-        k4abt_frame_t body_frame = NULL;
-        k4a_wait_result_t pop_frame_result = k4abt_tracker_pop_result(g_tracker, &body_frame, 0);
-        if (pop_frame_result == K4A_WAIT_RESULT_SUCCEEDED)
-        {
-          // Successfully popped the body tracking result. Start your processing
-          size_t num_bodies = k4abt_frame_get_num_bodies(body_frame);
-
-          jsFrame.resetBodyFrame();
-
-          // body index map?
-          k4a_image_t body_index_map_image = NULL;
-          k4a_image_t body_index_map_color_image = NULL;
-          if (g_customDeviceConfig.include_body_index_map)
+          // printf("[kinect_azure.cc] check tracker\n");
+          if (g_tracker != NULL)
           {
-            body_index_map_image = k4abt_frame_get_body_index_map(body_frame);
-            if (body_index_map_image != NULL)
+            // printf("[kinect_azure.cc] k4abt_tracker_enqueue_capture\n");
+            k4a_wait_result_t queue_capture_result = k4abt_tracker_enqueue_capture(g_tracker, sensor_capture, 0);
+            if (queue_capture_result == K4A_WAIT_RESULT_FAILED)
             {
-              jsFrame.bodyFrame.bodyIndexMapImageFrame.image_length = k4a_image_get_size(body_index_map_image);
-              jsFrame.bodyFrame.bodyIndexMapImageFrame.width = k4a_image_get_width_pixels(body_index_map_image);
-              jsFrame.bodyFrame.bodyIndexMapImageFrame.height = k4a_image_get_height_pixels(body_index_map_image);
-              jsFrame.bodyFrame.bodyIndexMapImageFrame.stride_bytes = k4a_image_get_stride_bytes(body_index_map_image);
-              jsFrame.bodyFrame.bodyIndexMapImageFrame.image_data = new uint8_t[jsFrame.bodyFrame.bodyIndexMapImageFrame.image_length];
-              uint8_t *image_data = k4a_image_get_buffer(body_index_map_image);
-              memcpy(jsFrame.bodyFrame.bodyIndexMapImageFrame.image_data, image_data, jsFrame.bodyFrame.bodyIndexMapImageFrame.image_length);
+              k4a_capture_release(sensor_capture);
+              mtx.unlock();
+              break;
             }
-            // transform to color space as well?
-            if (g_customDeviceConfig.include_depth_to_color)
-            {
-              if (
-                  k4a_image_create(
-                      K4A_IMAGE_FORMAT_CUSTOM8,
-                      jsFrame.colorImageFrame.width, jsFrame.colorImageFrame.height,
-                      jsFrame.colorImageFrame.width * (int)sizeof(uint8_t),
-                      &body_index_map_color_image) == K4A_RESULT_SUCCEEDED)
-              {
-                if (k4a_transformation_depth_image_to_color_camera_custom(transformer, depth_image, body_index_map_image, depth_to_color_image, body_index_map_color_image, K4A_TRANSFORMATION_INTERPOLATION_TYPE_NEAREST, K4ABT_BODY_INDEX_MAP_BACKGROUND) == K4A_RESULT_SUCCEEDED)
-                {
-                  jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.image_length = k4a_image_get_size(body_index_map_color_image);
-                  jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.width = k4a_image_get_width_pixels(body_index_map_color_image);
-                  jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.height = k4a_image_get_height_pixels(body_index_map_color_image);
-                  jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.stride_bytes = k4a_image_get_stride_bytes(body_index_map_color_image);
-                  jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.image_data = new uint8_t[jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.image_length];
 
-                  uint8_t *image_data = k4a_image_get_buffer(body_index_map_color_image);
-                  memcpy(jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.image_data, image_data, jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.image_length);
+            k4abt_frame_t body_frame = NULL;
+            k4a_wait_result_t pop_frame_result = k4abt_tracker_pop_result(g_tracker, &body_frame, 0);
+            if (pop_frame_result == K4A_WAIT_RESULT_SUCCEEDED)
+            {
+              // Successfully popped the body tracking result. Start your processing
+              size_t num_bodies = k4abt_frame_get_num_bodies(body_frame);
+
+              jsFrame.resetBodyFrame();
+
+              // body index map?
+              k4a_image_t body_index_map_image = NULL;
+              k4a_image_t body_index_map_color_image = NULL;
+              if (g_customDeviceConfig.include_body_index_map)
+              {
+                body_index_map_image = k4abt_frame_get_body_index_map(body_frame);
+                if (body_index_map_image != NULL)
+                {
+                  jsFrame.bodyFrame.bodyIndexMapImageFrame.image_length = k4a_image_get_size(body_index_map_image);
+                  jsFrame.bodyFrame.bodyIndexMapImageFrame.width = k4a_image_get_width_pixels(body_index_map_image);
+                  jsFrame.bodyFrame.bodyIndexMapImageFrame.height = k4a_image_get_height_pixels(body_index_map_image);
+                  jsFrame.bodyFrame.bodyIndexMapImageFrame.stride_bytes = k4a_image_get_stride_bytes(body_index_map_image);
+                  jsFrame.bodyFrame.bodyIndexMapImageFrame.image_data = new uint8_t[jsFrame.bodyFrame.bodyIndexMapImageFrame.image_length];
+                  uint8_t *image_data = k4a_image_get_buffer(body_index_map_image);
+                  memcpy(jsFrame.bodyFrame.bodyIndexMapImageFrame.image_data, image_data, jsFrame.bodyFrame.bodyIndexMapImageFrame.image_length);
                 }
-              }
-            }
-          }
-
-          jsFrame.bodyFrame.numBodies = num_bodies;
-          jsFrame.bodyFrame.bodies = new JSBody[num_bodies];
-
-          for (size_t i = 0; i < num_bodies; i++)
-          {
-            jsFrame.bodyFrame.bodies[i].id = k4abt_frame_get_body_id(body_frame, i);
-
-            k4abt_skeleton_t skeleton;
-            k4abt_frame_get_body_skeleton(body_frame, i, &skeleton);
-
-            for (int j = 0; j < K4ABT_JOINT_COUNT; j++)
-            {
-              k4abt_joint_t joint = skeleton.joints[j];
-              jsFrame.bodyFrame.bodies[i].skeleton.joints[j].index = j;
-
-              jsFrame.bodyFrame.bodies[i].skeleton.joints[j].cameraX = joint.position.xyz.x;
-              jsFrame.bodyFrame.bodies[i].skeleton.joints[j].cameraY = joint.position.xyz.y;
-              jsFrame.bodyFrame.bodies[i].skeleton.joints[j].cameraZ = joint.position.xyz.z;
-
-              jsFrame.bodyFrame.bodies[i].skeleton.joints[j].orientationX = joint.orientation.wxyz.x;
-              jsFrame.bodyFrame.bodies[i].skeleton.joints[j].orientationY = joint.orientation.wxyz.y;
-              jsFrame.bodyFrame.bodies[i].skeleton.joints[j].orientationZ = joint.orientation.wxyz.z;
-              jsFrame.bodyFrame.bodies[i].skeleton.joints[j].orientationW = joint.orientation.wxyz.w;
-
-              k4a_float2_t point2d;
-              bool valid;
-              valid = transform_joint_from_depth_3d_to_2d(
-                  &g_calibration,
-                  skeleton.joints[j].position,
-                  point2d,
-                  K4A_CALIBRATION_TYPE_DEPTH);
-
-              if (valid)
-              {
-                jsFrame.bodyFrame.bodies[i].skeleton.joints[j].depthX = point2d.xy.x;
-                jsFrame.bodyFrame.bodies[i].skeleton.joints[j].depthY = point2d.xy.y;
-              }
-
-              if (g_deviceConfig.color_resolution != K4A_COLOR_RESOLUTION_OFF)
-              {
-                valid = transform_joint_from_depth_3d_to_2d(
-                    &g_calibration,
-                    skeleton.joints[j].position,
-                    point2d,
-                    K4A_CALIBRATION_TYPE_COLOR);
-
-                if (valid)
+                // transform to color space as well?
+                if (g_customDeviceConfig.include_depth_to_color)
                 {
-                  jsFrame.bodyFrame.bodies[i].skeleton.joints[j].colorX = point2d.xy.x;
-                  jsFrame.bodyFrame.bodies[i].skeleton.joints[j].colorY = point2d.xy.y;
+                  if (
+                      k4a_image_create(
+                          K4A_IMAGE_FORMAT_CUSTOM8,
+                          jsFrame.colorImageFrame.width, jsFrame.colorImageFrame.height,
+                          jsFrame.colorImageFrame.width * (int)sizeof(uint8_t),
+                          &body_index_map_color_image) == K4A_RESULT_SUCCEEDED)
+                  {
+                    if (k4a_transformation_depth_image_to_color_camera_custom(transformer, depth_image, body_index_map_image, depth_to_color_image, body_index_map_color_image, K4A_TRANSFORMATION_INTERPOLATION_TYPE_NEAREST, K4ABT_BODY_INDEX_MAP_BACKGROUND) == K4A_RESULT_SUCCEEDED)
+                    {
+                      jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.image_length = k4a_image_get_size(body_index_map_color_image);
+                      jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.width = k4a_image_get_width_pixels(body_index_map_color_image);
+                      jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.height = k4a_image_get_height_pixels(body_index_map_color_image);
+                      jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.stride_bytes = k4a_image_get_stride_bytes(body_index_map_color_image);
+                      jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.image_data = new uint8_t[jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.image_length];
+
+                      uint8_t *image_data = k4a_image_get_buffer(body_index_map_color_image);
+                      memcpy(jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.image_data, image_data, jsFrame.bodyFrame.bodyIndexMapToColorImageFrame.image_length);
+                    }
+                  }
                 }
               }
 
-              jsFrame.bodyFrame.bodies[i].skeleton.joints[j].confidence = joint.confidence_level;
+              jsFrame.bodyFrame.numBodies = num_bodies;
+              jsFrame.bodyFrame.bodies = new JSBody[num_bodies];
+
+              for (size_t i = 0; i < num_bodies; i++)
+              {
+                jsFrame.bodyFrame.bodies[i].id = k4abt_frame_get_body_id(body_frame, i);
+
+                k4abt_skeleton_t skeleton;
+                k4abt_frame_get_body_skeleton(body_frame, i, &skeleton);
+
+                for (int j = 0; j < K4ABT_JOINT_COUNT; j++)
+                {
+                  k4abt_joint_t joint = skeleton.joints[j];
+                  jsFrame.bodyFrame.bodies[i].skeleton.joints[j].index = j;
+
+                  jsFrame.bodyFrame.bodies[i].skeleton.joints[j].cameraX = joint.position.xyz.x;
+                  jsFrame.bodyFrame.bodies[i].skeleton.joints[j].cameraY = joint.position.xyz.y;
+                  jsFrame.bodyFrame.bodies[i].skeleton.joints[j].cameraZ = joint.position.xyz.z;
+
+                  jsFrame.bodyFrame.bodies[i].skeleton.joints[j].orientationX = joint.orientation.wxyz.x;
+                  jsFrame.bodyFrame.bodies[i].skeleton.joints[j].orientationY = joint.orientation.wxyz.y;
+                  jsFrame.bodyFrame.bodies[i].skeleton.joints[j].orientationZ = joint.orientation.wxyz.z;
+                  jsFrame.bodyFrame.bodies[i].skeleton.joints[j].orientationW = joint.orientation.wxyz.w;
+
+                  k4a_float2_t point2d;
+                  bool valid;
+                  valid = transform_joint_from_depth_3d_to_2d(
+                      &g_calibration,
+                      skeleton.joints[j].position,
+                      point2d,
+                      K4A_CALIBRATION_TYPE_DEPTH);
+
+                  if (valid)
+                  {
+                    jsFrame.bodyFrame.bodies[i].skeleton.joints[j].depthX = point2d.xy.x;
+                    jsFrame.bodyFrame.bodies[i].skeleton.joints[j].depthY = point2d.xy.y;
+                  }
+
+                  if (g_deviceConfig.color_resolution != K4A_COLOR_RESOLUTION_OFF)
+                  {
+                    valid = transform_joint_from_depth_3d_to_2d(
+                        &g_calibration,
+                        skeleton.joints[j].position,
+                        point2d,
+                        K4A_CALIBRATION_TYPE_COLOR);
+
+                    if (valid)
+                    {
+                      jsFrame.bodyFrame.bodies[i].skeleton.joints[j].colorX = point2d.xy.x;
+                      jsFrame.bodyFrame.bodies[i].skeleton.joints[j].colorY = point2d.xy.y;
+                    }
+                  }
+
+                  jsFrame.bodyFrame.bodies[i].skeleton.joints[j].confidence = joint.confidence_level;
+                }
+              }
+
+              if (body_index_map_image != NULL)
+              {
+                k4a_image_release(body_index_map_image);
+                body_index_map_image = NULL;
+              }
+
+              if (body_index_map_color_image != NULL)
+              {
+                k4a_image_release(body_index_map_color_image);
+                body_index_map_color_image = NULL;
+              }
+
+              if (body_index_map_color_image != NULL)
+              {
+                k4a_image_release(body_index_map_color_image);
+                body_index_map_color_image = NULL;
+              }
+
+              k4abt_frame_release(body_frame);
+              body_frame = NULL;
             }
           }
-
-          if (body_index_map_image != NULL)
-          {
-            k4a_image_release(body_index_map_image);
-            body_index_map_image = NULL;
-          }
-
-          if (body_index_map_color_image != NULL)
-          {
-            k4a_image_release(body_index_map_color_image);
-            body_index_map_color_image = NULL;
-          }
-
-          if (body_index_map_color_image != NULL)
-          {
-            k4a_image_release(body_index_map_color_image);
-            body_index_map_color_image = NULL;
-          }
-
-          k4abt_frame_release(body_frame);
-          body_frame = NULL;
-        }
-      }
 #endif // KINECT_AZURE_ENABLE_BODY_TRACKING
 
-      // release images
-      if (depth_image != NULL)
-      {
-        k4a_image_release(depth_image);
-        depth_image = NULL;
-      }
-      if (ir_image != NULL)
-      {
-        k4a_image_release(ir_image);
-        ir_image = NULL;
-      }
-      if (color_image != NULL)
-      {
-        k4a_image_release(color_image);
-        color_image = NULL;
-      }
-      if (color_to_depth_image != NULL)
-      {
-        k4a_image_release(color_to_depth_image);
-        color_to_depth_image = NULL;
-      }
-      if (depth_to_color_image != NULL)
-      {
-        k4a_image_release(depth_to_color_image);
-        depth_to_color_image = NULL;
-      }
+          // release images
+          if (depth_image != NULL)
+          {
+            k4a_image_release(depth_image);
+            depth_image = NULL;
+          }
+          if (ir_image != NULL)
+          {
+            k4a_image_release(ir_image);
+            ir_image = NULL;
+          }
+          if (color_image != NULL)
+          {
+            k4a_image_release(color_image);
+            color_image = NULL;
+          }
+          if (color_to_depth_image != NULL)
+          {
+            k4a_image_release(color_to_depth_image);
+            color_to_depth_image = NULL;
+          }
+          if (depth_to_color_image != NULL)
+          {
+            k4a_image_release(depth_to_color_image);
+            depth_to_color_image = NULL;
+          }
 
-      k4a_capture_release(sensor_capture);
+          k4a_capture_release(sensor_capture);
 
-      if (!is_listening)
-      {
-        mtx.unlock();
-        break;
-      }
-      // Perform a blocking call
-      mtx.unlock();
-      napi_status status = tsfn.BlockingCall(&jsFrame, callback);
-      if (status != napi_ok)
-      {
-        break;
-      }
-    }
+          if (!is_listening)
+          {
+            mtx.unlock();
+            break;
+          }
+          // Perform a blocking call
+          mtx.unlock();
+          napi_status status = tsfn.BlockingCall(&jsFrame, callback);
+          if (status != napi_ok)
+          {
+            break;
+          }
+        }
 
-    if (processed_color_data != NULL)
-    {
-      delete[] processed_color_data;
-      processed_color_data = NULL;
-    }
+        if (processed_color_data != NULL)
+        {
+          delete[] processed_color_data;
+          processed_color_data = NULL;
+        }
 
-    if (processed_depth_data != NULL)
-    {
-      delete[] processed_depth_data;
-      processed_depth_data = NULL;
-    }
+        if (processed_depth_data != NULL)
+        {
+          delete[] processed_depth_data;
+          processed_depth_data = NULL;
+        }
 
-    if (transformer != NULL)
-    {
-      k4a_transformation_destroy(transformer);
-    }
+        if (transformer != NULL)
+        {
+          k4a_transformation_destroy(transformer);
+        }
 
-    is_listening = false;
-    // printf("[kinect_azure.cc] reset jsFrame\n");
-    jsFrame.reset();
-    // printf("[kinect_azure.cc] Release thread-safe function!\n");
-    // Release the thread-safe function
-    tsfn.Release();
-    // printf("[kinect_azure.cc] Thread-safe function released!\n");
-  });
+        is_listening = false;
+        // printf("[kinect_azure.cc] reset jsFrame\n");
+        jsFrame.reset();
+        // printf("[kinect_azure.cc] Release thread-safe function!\n");
+        // Release the thread-safe function
+        tsfn.Release();
+        // printf("[kinect_azure.cc] Thread-safe function released!\n");
+      });
 
   return Napi::Boolean::New(env, true);
 }
